@@ -1,0 +1,7 @@
+# DECISIONS.md
+
+1. **Indexes.** I created a unique index on `employees.emp_code` and a unique compound index on `attendance_logs(emp_code, date)` to enforce data integrity and solve check-then-insert race conditions. For query performance (IXSCAN), I added `(date: -1, emp_code: 1)` to support the main attendance list sort, and `department` on employees. I rejected creating text indexes or indexing derived fields, as analytics queries are heavily date-anchored.
+2. **Punch-in race.** Two identical requests arrive. Both hit `db.attendance_logs.insert_one()`. MongoDB's unique compound index atomically accepts the first request (returning 201). The second request throws a `DuplicateKeyError`, which FastAPI catches and translates into a 409 Conflict.
+3. **Ties.** The leaderboard uses MongoDB's `$setWindowFields` with the `$rank` operator. This applies standard competition ranking (e.g., 1, 2, 2, 4). The `limit` is applied *after* this stage via `$match`, meaning all employees tied at the cutoff rank are returned.
+4. **Headcount.** The aggregation pipeline starts at the `employees` collection (the source of truth for headcount) and uses `$lookup` to LEFT JOIN `attendance_logs`. Using `preserveNullAndEmptyArrays` ensures employees with zero logs are retained in the grouping stage.
+5. **One thing you would change.** For 100x the data, running `$lookup` and `$setWindowFields` on the fly becomes expensive. I would implement materialized views or scheduled nightly jobs to pre-aggregate daily and monthly statistics.
